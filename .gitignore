@@ -1,0 +1,7 @@
+# Idea
+.idea
+
+# OSM import files
+osm2pgsql/osm2pgsql-bin
+osm2pgsql/*.zip
+osm2pgsql/*.osm.pbf

@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="utf-8" />
+    <title>Carte</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link href="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.css" rel="stylesheet" />
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+        }
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+<body>
+<div id="map"></div>
+<script src="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/opening_hours@latest/opening_hours.min.js"></script>
+<script>
+    function parseHash() {
+        const hash = location.hash.replace('#', '');
+        const parts = hash.split('/');
+        if (parts.length === 3) {
+            const zoom = parseFloat(parts[0]);
+            const lat = parseFloat(parts[1]);
+            const lng = parseFloat(parts[2]);
+            if (!isNaN(zoom) && !isNaN(lat) && !isNaN(lng)) {
+                return { zoom, center: [lng, lat] };
+            }
+        }
+        // Valeur par défaut (Toulouse)
+        return { zoom: 12, center: [1.444, 43.6045] };
+    }
+
+    function formatOpeningHours(openingHoursString) {
+        if (!openingHoursString) return 'Horaires non renseignés';
+
+        try {
+            const oh = new opening_hours(openingHoursString, {address: { country_code: 'fr' }});
+            const isOpen = oh.getState();
+
+            let status = '';
+            if (isOpen) {
+                status = '✅ Ouvert actuellement';
+            } else {
+                const nextChange = oh.getNextChange(new Date());
+                const formatter = new Intl.DateTimeFormat('fr-FR', {
+                    weekday: 'long',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                });
+                status = `⛔ Fermé — ouvre ${formatter.format(new Date(nextChange))}`;
+            }
+
+            const dayLabels = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
+            const perDay = [];
+
+            const start = new Date();
+            start.setHours(0, 0, 0, 0);
+            const end = new Date(start);
+            end.setDate(end.getDate() + 7);
+
+            const intervals = oh.getOpenIntervals(start, end);
+
+            for (let i = 0; i < 7; i++) {
+                perDay[i] = [];
+            }
+
+            for (const interval of intervals) {
+                const from = new Date(interval[0]);
+                const to = new Date(interval[1]);
+
+                const dayIndex = (from.getDay() + 6) % 7; // JS: 0=dimanche → 6, 1=lundi → 0, etc.
+                const fromStr = from.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+                const toStr = to.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+
+                perDay[dayIndex].push(`${fromStr}–${toStr}`);
+            }
+
+            const groups = [];
+            let currentGroup = { days: [0], hours: perDay[0].join(', ') || 'Fermé' };
+
+            for (let i = 1; i < 7; i++) {
+                const hours = perDay[i].join(', ') || 'Fermé';
+                if (hours === currentGroup.hours) {
+                    currentGroup.days.push(i);
+                } else {
+                    groups.push(currentGroup);
+                    currentGroup = { days: [i], hours };
+                }
+            }
+            groups.push(currentGroup);
+
+            let scheduleHtml = '<br/><br/><strong>Horaires :</strong><ul style="padding-left: 1.2em">';
+            for (const group of groups) {
+                const first = dayLabels[group.days[0]];
+                const last = dayLabels[group.days[group.days.length - 1]];
+                const dayText = (group.days.length === 1) ? first : `${first} – ${last}`;
+                scheduleHtml += `<li><strong>${dayText}</strong> : ${group.hours}</li>`;
+            }
+            scheduleHtml += '</ul>';
+
+            return `${status}${scheduleHtml}`;
+        } catch (err) {
+            return `Format invalide : ${err}`;
+        }
+    }
+
+
+    const { zoom, center } = parseHash();
+    const franceBounds = [ [-5.3, 41.2], [9.8, 51.2] ];
+
+    const map = new maplibregl.Map({
+        container: 'map',
+        style: 'https://tileserver.lacasa.fr/styles/maptiler-basic/style.json',
+        center: center,
+        zoom: zoom,
+        minZoom: 5,
+        maxBounds: franceBounds
+    });
+
+    // Ajout des contrôles de navigation (zoom, rotation)
+    map.addControl(new maplibregl.NavigationControl(), 'top-right');
+
+    map.on('moveend', () => {
+        const center = map.getCenter();
+        const zoom = map.getZoom().toFixed(2);
+        const lat = center.lat.toFixed(5);
+        const lng = center.lng.toFixed(5);
+        location.hash = `${zoom}/${lat}/${lng}`;
+    });
+
+
+    map.on('load', () => {
+        map.addSource('martin', {
+            type: 'vector',
+            url: 'http://localhost:3000/pois',
+            minzoom: 14
+        });
+
+        map.addLayer({
+            id: 'pois',
+            type: 'circle',
+            source: 'martin',
+            'source-layer': 'pois',
+            paint: {
+                'circle-radius': 6,
+                'circle-color': '#1976D2',
+                'circle-stroke-width': 1,
+                'circle-stroke-color': '#ffffff'
+            }
+        });
+
+        const hoverPopup = new maplibregl.Popup({
+            closeButton: false,
+            closeOnClick: false
+        });
+
+        map.on('mousemove', 'pois', (e) => {
+            const props = e.features[0].properties;
+            const name = props.name || 'Nom inconnu';
+            const hoursText = formatOpeningHours(props.opening_hours);
+
+            hoverPopup
+                .setLngLat(e.lngLat)
+                .setHTML(`<strong>${name}</strong><br/><em>${hoursText}</em>`)
+                .addTo(map);
+        });
+
+        map.on('mouseenter', 'pois', () => {
+            map.getCanvas().style.cursor = 'pointer';
+        });
+        map.on('mouseleave', 'pois', () => {
+            map.getCanvas().style.cursor = '';
+        });
+    });
+
+</script>
+</body>
+</html>

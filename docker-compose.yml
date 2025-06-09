@@ -1,0 +1,29 @@
+
+services:
+  postgis:
+    image: postgis/postgis:latest
+    environment:
+      - POSTGRES_USER=postgis
+      - POSTGRES_PASSWORD=postgis
+      - POSTGRES_DB=cartes
+    ports:
+      - 5432:5432
+
+
+  martin:
+    image: ghcr.io/maplibre/martin:latest
+    ports:
+      - 3000:3000
+    volumes:
+      - ./martin/martin.yml:/config.yml:ro
+    depends_on:
+      - postgis
+    command: [ "--webui", "enable-for-all", "--config", "/config.yml" ]
+
+
+  web:
+    image: nginx:alpine
+    ports:
+      - 8080:80
+    volumes:
+      - ./html:/usr/share/nginx/html

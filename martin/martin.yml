@@ -1,0 +1,4 @@
+postgres:
+  connection_string: 'postgres://postgis:postgis@postgis:5432/cartes'
+  auto_publish:
+    from_schemas: public
